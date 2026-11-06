@@ -1,0 +1,159 @@
+{
+  "decision_threshold": 0.42,
+  "feature_order": [
+    "Age",
+    "TypeofContact",
+    "CityTier",
+    "DurationOfPitch",
+    "Occupation",
+    "Gender",
+    "NumberOfPersonVisiting",
+    "NumberOfFollowups",
+    "PreferredPropertyStar",
+    "MaritalStatus",
+    "NumberOfTrips",
+    "Passport",
+    "PitchSatisfactionScore",
+    "OwnCar",
+    "NumberOfChildrenVisiting",
+    "Designation",
+    "MonthlyIncome"
+  ],
+  "categories": {
+    "TypeofContact": [
+      "Company Invited",
+      "Self Enquiry"
+    ],
+    "Occupation": [
+      "Free Lancer",
+      "Large Business",
+      "Salaried",
+      "Small Business"
+    ],
+    "Gender": [
+      "Female",
+      "Male"
+    ],
+    "MaritalStatus": [
+      "Divorced",
+      "Married",
+      "Single",
+      "Unmarried"
+    ],
+    "Designation": [
+      "AVP",
+      "Executive",
+      "Manager",
+      "Senior Manager",
+      "VP"
+    ]
+  },
+  "category_defaults": {
+    "TypeofContact": "Self Enquiry",
+    "Occupation": "Salaried",
+    "Gender": "Male",
+    "MaritalStatus": "Married",
+    "Designation": "Executive"
+  },
+  "numeric_ranges": {
+    "Age": {
+      "min": 18.0,
+      "max": 61.0,
+      "median": 36.0
+    },
+    "CityTier": {
+      "min": 1.0,
+      "max": 3.0,
+      "median": 1.0
+    },
+    "DurationOfPitch": {
+      "min": 5.0,
+      "max": 127.0,
+      "median": 14.0
+    },
+    "NumberOfPersonVisiting": {
+      "min": 1.0,
+      "max": 5.0,
+      "median": 3.0
+    },
+    "NumberOfFollowups": {
+      "min": 1.0,
+      "max": 6.0,
+      "median": 4.0
+    },
+    "PreferredPropertyStar": {
+      "min": 3.0,
+      "max": 5.0,
+      "median": 3.0
+    },
+    "NumberOfTrips": {
+      "min": 1.0,
+      "max": 21.0,
+      "median": 3.0
+    },
+    "Passport": {
+      "min": 0.0,
+      "max": 1.0,
+      "median": 0.0
+    },
+    "PitchSatisfactionScore": {
+      "min": 1.0,
+      "max": 5.0,
+      "median": 3.0
+    },
+    "OwnCar": {
+      "min": 0.0,
+      "max": 1.0,
+      "median": 1.0
+    },
+    "NumberOfChildrenVisiting": {
+      "min": 0.0,
+      "max": 3.0,
+      "median": 1.0
+    },
+    "MonthlyIncome": {
+      "min": 1000.0,
+      "max": 98678.0,
+      "median": 22276.5
+    }
+  },
+  "best_params": {
+    "colsample_bytree": 0.8,
+    "learning_rate": 0.1,
+    "max_depth": 10,
+    "n_estimators": 100,
+    "reg_lambda": 1
+  },
+  "test_metrics": {
+    "accuracy": 0.9293,
+    "precision": 0.8333,
+    "recall": 0.7986,
+    "f1": 0.8156,
+    "roc_auc": 0.9544
+  },
+  "feature_importance": {
+    "Passport": 0.3068999946117401,
+    "Designation": 0.20839999616146088,
+    "MaritalStatus": 0.094200000166893,
+    "Occupation": 0.08649999648332596,
+    "Gender": 0.053300000727176666,
+    "CityTier": 0.030899999663233757,
+    "TypeofContact": 0.028999999165534973,
+    "NumberOfFollowups": 0.024399999529123306,
+    "PreferredPropertyStar": 0.024299999698996544,
+    "DurationOfPitch": 0.02370000071823597,
+    "PitchSatisfactionScore": 0.0215000007301569,
+    "Age": 0.021299999207258224,
+    "NumberOfTrips": 0.019500000402331352,
+    "MonthlyIncome": 0.016599999740719795,
+    "OwnCar": 0.013899999670684338,
+    "NumberOfPersonVisiting": 0.013000000268220901,
+    "NumberOfChildrenVisiting": 0.012400000356137753
+  },
+  "library_versions": {
+    "scikit-learn": "1.6.1",
+    "xgboost": "2.1.4",
+    "pandas": "2.2.2"
+  },
+  "mlflow_run_id": "62f328fe579642daa2ac97e51f3216b1"
+}
