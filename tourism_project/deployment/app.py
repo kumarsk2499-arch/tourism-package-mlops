@@ -1,11 +1,7 @@
-"""
-Streamlit app for the Wellness Tourism Package purchase model.
-
-Loads the model that the GitHub Actions pipeline trained and committed next to
-this file, collects one customer's details, arranges them into a dataframe with
-the exact columns the model was trained on, and reports the purchase
-probability and the resulting decision at the model's tuned threshold.
-"""
+# Streamlit app for the Wellness Tourism Package model.
+# Loads the model the github actions pipeline committed next to this file, takes one
+# customer's details, puts them in a dataframe with the training columns, and shows
+# the purchase probability + decision at the model's threshold.
 import json
 from pathlib import Path
 
@@ -22,7 +18,7 @@ st.set_page_config(page_title="Wellness Package Purchase Predictor", layout="cen
 
 @st.cache_resource
 def load_artifacts():
-    """Load the model and its metadata once per app session."""
+    # cached so the model is only loaded once, not on every click
     return joblib.load(MODEL_PATH), json.loads(META_PATH.read_text())
 
 
@@ -34,13 +30,13 @@ threshold = meta["decision_threshold"]
 
 
 def choice(label, col):
-    """Dropdown limited to the levels seen in training, opened on the most common one."""
+    # dropdown with only the levels from training, starts on the most common one
     options = categories[col]
     return st.selectbox(label, options, index=options.index(defaults[col]))
 
 
 def int_range(col):
-    """Integer slider bounds and default taken from the training data."""
+    # slider min, max and default (median) from the training data
     r = ranges[col]
     return int(r["min"]), int(r["max"]), int(r["median"])
 
@@ -85,7 +81,7 @@ with st.form("customer_form"):
     submitted = st.form_submit_button("Predict", type="primary")
 
 if submitted:
-    # One row with the same column names and order used during training
+    # one row, same column names and order as the training data
     input_data = pd.DataFrame([{
         "Age": age,
         "TypeofContact": contact_type,

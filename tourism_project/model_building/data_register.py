@@ -1,23 +1,19 @@
-"""
-Dataset registration for the Wellness Tourism Package pipeline.
-
-Reads tourism.csv from the repository data folder, confirms that every column in
-the data dictionary is present, and prints a data-quality summary. A missing
-column raises an error, which fails the GitHub Actions job and keeps every
-downstream job from running on a malformed file.
-"""
+# Step 1 of the pipeline: dataset registration.
+# Checks that tourism.csv has all the expected columns and prints a data quality
+# summary. A missing column raises an error, so the github actions job fails here
+# and the later jobs never run on a bad file.
 import hashlib
 from pathlib import Path
 
 import pandas as pd
 
-# Paths resolve from the repository root, so the script behaves the same when
-# it is launched from the notebook or from the workflow runner
+# paths start from the repo root so the script works from the notebook and in github actions
 ROOT = Path(__file__).resolve().parents[2]
 DATA_PATH = ROOT / "tourism_project" / "data" / "tourism.csv"
 
 TARGET = "ProdTaken"
 ID_COLUMNS = ["CustomerID"]
+# all 20 columns from the data dictionary
 EXPECTED_COLUMNS = [
     "CustomerID", "ProdTaken", "Age", "TypeofContact", "CityTier",
     "DurationOfPitch", "Occupation", "Gender", "NumberOfPersonVisiting",
@@ -25,12 +21,13 @@ EXPECTED_COLUMNS = [
     "MaritalStatus", "NumberOfTrips", "Passport", "PitchSatisfactionScore",
     "OwnCar", "NumberOfChildrenVisiting", "Designation", "MonthlyIncome",
 ]
-# Category levels named in the data dictionary; anything else gets flagged
+# levels listed in the data dictionary, anything else gets flagged
 DICTIONARY_LEVELS = {
     "Gender": {"Male", "Female"},
     "MaritalStatus": {"Single", "Married", "Divorced"},
 }
-# Columns that describe the customer rather than one particular sales contact
+# columns about the customer themselves (not about one sales call),
+# used to find the same customer entered more than once
 PROFILE_COLUMNS = [
     "Age", "TypeofContact", "CityTier", "Occupation", "Gender", "MaritalStatus",
     "Designation", "MonthlyIncome", "Passport", "OwnCar",
@@ -44,14 +41,14 @@ def header(title):
 def main():
     df = pd.read_csv(DATA_PATH)
 
-    # Schema validation: stop the pipeline if any expected column is missing
+    # schema check, stop the pipeline if a column is missing
     missing_cols = [c for c in EXPECTED_COLUMNS if c not in df.columns]
     if missing_cols:
         raise ValueError(f"Dataset is missing expected columns: {missing_cols}")
     extra_cols = [c for c in df.columns if c not in EXPECTED_COLUMNS]
     feature_cols = [c for c in df.columns if c not in ID_COLUMNS + extra_cols]
 
-    # A content hash records exactly which version of the file was registered
+    # hash of the file, records exactly which version got registered
     sha256 = hashlib.sha256(DATA_PATH.read_bytes()).hexdigest()
 
     header("Dataset registration")
@@ -73,6 +70,7 @@ def main():
     for label, value in quality:
         print(f"{label:<36}: {value}")
 
+    # same customer profile showing up on more than one row (after removing exact dupes)
     header("Repeat-customer check (exact duplicates set aside)")
     unique_rows = df[feature_cols].drop_duplicates()
     profiles = unique_rows.groupby(PROFILE_COLUMNS)[TARGET].agg(["size", "nunique"])
@@ -83,6 +81,7 @@ def main():
         (f"Profiles with conflicting {TARGET} values", int((repeats["nunique"] > 1).sum())),
     ]:
         print(f"{label:<43}: {value}")
+    # which of the other columns change within those repeated profiles
     in_repeats = unique_rows[unique_rows.duplicated(PROFILE_COLUMNS, keep=False)]
     print("Number of repeat profiles in which each remaining column varies:")
     other_cols = [c for c in feature_cols if c not in PROFILE_COLUMNS + [TARGET]]
@@ -100,6 +99,7 @@ def main():
         unexpected = sorted(set(df[col].unique()) - allowed)
         print(f"{col:<15}: {unexpected if unexpected else 'none'}")
 
+    # does ProductPitched just follow Designation?
     header("Redundancy check")
     pairs = df[["ProductPitched", "Designation"]].drop_duplicates()
     one_to_one = pairs["ProductPitched"].nunique() == len(pairs) == pairs["Designation"].nunique()

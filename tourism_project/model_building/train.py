@@ -1,18 +1,12 @@
-"""
-Model training with experiment tracking for the Wellness Tourism Package pipeline.
-
-Loads the train/test splits produced by the data-prep job, tunes an XGBoost
-classifier with GridSearchCV, logs every parameter combination to MLflow as a
-nested run, selects the final configuration with the one-standard-error rule,
-picks a decision threshold from out-of-fold predictions on the training data,
-evaluates the tuned model on the held-out test split, and saves the model next
-to the Streamlit app so the workflow can commit it to the repository.
-"""
+# Step 3 of the pipeline: model training with experiment tracking.
+# Loads the splits from the data-prep job, tunes XGBoost with GridSearchCV, logs
+# every parameter combo to MLflow, picks a threshold, evaluates on the test split,
+# and saves the model next to the streamlit app so the workflow can commit it.
 import json
 import os
 from pathlib import Path
 
-# Keep the log readable: MLflow otherwise prints a link for every nested run
+# otherwise mlflow prints a link for every single nested run
 os.environ.setdefault("MLFLOW_SUPPRESS_PRINTING_URL_TO_STDOUT", "true")
 os.environ.setdefault("GIT_PYTHON_REFRESH", "quiet")
 
@@ -44,11 +38,12 @@ NUMERIC_FEATURES = [
 ]
 CATEGORICAL_FEATURES = ["TypeofContact", "Occupation", "Gender", "MaritalStatus", "Designation"]
 
+# 3 x 5 x 2 x 2 x 2 = 120 combos
 PARAM_GRID = {
-    "xgbclassifier__n_estimators": [100, 200, 300],   # number of boosting rounds
-    "xgbclassifier__max_depth": [4, 6, 8, 10, 12],    # tree depth sets how many features can interact
-    "xgbclassifier__learning_rate": [0.05, 0.1],      # shrinkage applied to each new tree
-    "xgbclassifier__colsample_bytree": [0.6, 0.8],    # share of features sampled per tree
+    "xgbclassifier__n_estimators": [100, 200, 300],   # number of trees
+    "xgbclassifier__max_depth": [4, 6, 8, 10, 12],    # deeper = more feature interactions
+    "xgbclassifier__learning_rate": [0.05, 0.1],      # how much each tree adds
+    "xgbclassifier__colsample_bytree": [0.6, 0.8],    # share of columns each tree sees
     "xgbclassifier__reg_lambda": [1, 5],              # L2 penalty on leaf weights
 }
 
@@ -58,14 +53,14 @@ def header(title):
 
 
 def short(params):
-    """Drop the pipeline step prefix from parameter names."""
+    # strip the "xgbclassifier__" prefix for logging
     return {k.replace("xgbclassifier__", ""): v for k, v in params.items()}
 
 
 def one_standard_error_rule(cv_results):
-    """Index of the least complex candidate whose mean CV F1 is within one
-    standard error of the top mean. Complexity is ranked by tree depth, then by
-    number of trees; ties go to the higher score."""
+    # used as refit= in GridSearchCV. Out of the candidates within one standard error
+    # of the best mean CV F1, return the simplest one: lowest depth first, then fewest
+    # trees, and if those tie, the higher score
     scores = np.asarray(cv_results["mean_test_score"])
     std_errors = np.asarray(cv_results["std_test_score"]) / np.sqrt(N_FOLDS)
     top = int(np.argmax(scores))
@@ -76,7 +71,7 @@ def one_standard_error_rule(cv_results):
 
 
 def evaluate(y_true, proba, threshold):
-    """Classification metrics for the purchase class at a given threshold."""
+    # metrics for the purchase class at the given threshold
     pred = (proba >= threshold).astype(int)
     metrics = {
         "accuracy": accuracy_score(y_true, pred),
@@ -89,12 +84,12 @@ def evaluate(y_true, proba, threshold):
 
 
 def main():
-    # The tracking URI comes from the environment: the workflow starts an MLflow
-    # server on port 5000, and the notebook does the same during development
+    # tracking uri comes from the env: the workflow starts a server on port 5000,
+    # and the notebook starts one locally
     mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000"))
     mlflow.set_experiment(EXPERIMENT_NAME)
 
-    # The splits arrive from the data-prep job as a workflow artifact
+    # in github actions these csv files come from the data-splits artifact
     Xtrain = pd.read_csv(ROOT / "Xtrain.csv")
     Xtest = pd.read_csv(ROOT / "Xtest.csv")
     ytrain = pd.read_csv(ROOT / "ytrain.csv").squeeze("columns")
@@ -102,13 +97,12 @@ def main():
     expected = set(NUMERIC_FEATURES + CATEGORICAL_FEATURES)
     assert set(Xtrain.columns) == expected, f"Unexpected features: {sorted(set(Xtrain.columns) ^ expected)}"
 
-    # Class imbalance: weight the purchase class by the negative-to-positive ratio
+    # class imbalance: weight buyers by non-buyers / buyers
     scale_pos_weight = float((ytrain == 0).sum() / (ytrain == 1).sum())
 
-    # Numeric columns pass through unchanged because tree splits do not depend
-    # on feature scale. Categorical columns are one-hot encoded inside the
-    # pipeline, so the app can send raw category labels exactly as a user picks
-    # them, and unseen labels are ignored instead of raising an error.
+    # numeric cols pass through (trees don't care about scale), categoricals get
+    # one-hot encoded inside the pipeline so the app can send plain text labels.
+    # handle_unknown="ignore" so an unseen label doesn't crash the app
     preprocessor = make_column_transformer(
         ("passthrough", NUMERIC_FEATURES),
         (OneHotEncoder(handle_unknown="ignore"), CATEGORICAL_FEATURES),
@@ -118,17 +112,15 @@ def main():
         scale_pos_weight=scale_pos_weight,
         eval_metric="logloss",
         random_state=RANDOM_STATE,
-        n_jobs=1,  # GridSearchCV runs candidates in parallel instead
+        n_jobs=1,  # 1 thread per model, GridSearchCV runs the candidates in parallel
     )
     model_pipeline = make_pipeline(preprocessor, xgb_model)
     cv = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=RANDOM_STATE)
 
     with mlflow.start_run(run_name="xgb-grid-search") as parent_run:
-        # F1 on the purchase class balances wasted calls (precision) against
-        # missed buyers (recall), and unlike accuracy it is not inflated by the
-        # majority class. Several deep configurations score within noise of
-        # each other, so the refit step keeps the simplest one inside one
-        # standard error of the top score.
+        # scoring on F1 for the purchase class: balances wasted calls (precision)
+        # against missed buyers (recall), and isn't inflated by the 81% non-buyers
+        # like accuracy is
         grid_search = GridSearchCV(model_pipeline, PARAM_GRID, scoring="f1", cv=cv, n_jobs=-1,
                                    refit=one_standard_error_rule, return_train_score=True)
         grid_search.fit(Xtrain, ytrain)
@@ -136,7 +128,7 @@ def main():
         chosen = grid_search.best_index_
         top = int(np.argmax(results["mean_test_score"]))
 
-        # Every parameter combination becomes a nested run for side-by-side comparison
+        # one nested run per combo so they can be compared side by side in mlflow
         for i, params in enumerate(results["params"]):
             with mlflow.start_run(run_name=f"trial-{i + 1:03d}", nested=True):
                 mlflow.log_params(short(params))
@@ -152,8 +144,8 @@ def main():
         best_params = short(grid_search.best_params_)
         chosen_cv_f1 = float(results["mean_test_score"][chosen])
 
-        # Decision threshold from out-of-fold training predictions, so the test
-        # split stays untouched until the final evaluation
+        # threshold from out-of-fold predictions on the training data,
+        # the test split isn't touched until the final evaluation
         oof_proba = cross_val_predict(best_model, Xtrain, ytrain, cv=cv, method="predict_proba")[:, 1]
         thresholds = np.round(np.arange(0.20, 0.81, 0.01), 2)
         oof_f1 = [f1_score(ytrain, (oof_proba >= t).astype(int)) for t in thresholds]
@@ -164,6 +156,7 @@ def main():
         test_proba = best_model.predict_proba(Xtest)[:, 1]
         test_metrics, test_pred = evaluate(ytest, test_proba, threshold)
 
+        # parent run: selected params, search settings, threshold and all the metrics
         mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})
         mlflow.log_params({
             "scale_pos_weight": round(scale_pos_weight, 4),
@@ -180,18 +173,19 @@ def main():
             **{f"train_{k}": v for k, v in train_metrics.items()},
             **{f"test_{k}": v for k, v in test_metrics.items()},
         })
+        # tag the commit and run id when this runs inside github actions
         for key in ("GITHUB_SHA", "GITHUB_RUN_ID"):
             if os.environ.get(key):
                 mlflow.set_tag(key.lower(), os.environ[key])
 
-        # Gain-based importances, with one-hot levels summed back to their column
+        # gain importance, one-hot columns added back up to their original column
         names = best_model.named_steps["columntransformer"].get_feature_names_out()
         gains = pd.Series(best_model.named_steps["xgbclassifier"].feature_importances_, index=names)
         source = {n: next((c for c in CATEGORICAL_FEATURES if n.startswith(f"{c}_")), n) for n in names}
         importance = gains.groupby(source).sum().sort_values(ascending=False)
         importance = importance / importance.sum()
 
-        # Save the model and the metadata the app needs to build valid inputs
+        # save model + the metadata the app needs (threshold, column order, valid levels, ranges)
         DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
         joblib.dump(best_model, MODEL_PATH)
         meta = {
@@ -212,12 +206,10 @@ def main():
         mlflow.log_artifact(str(MODEL_PATH), artifact_path="model")
         mlflow.log_artifact(str(META_PATH), artifact_path="model")
 
-        # Reload from disk to confirm the saved file reproduces the predictions
+        # load the saved file back and make sure it gives the same predictions
         reload_ok = np.allclose(joblib.load(MODEL_PATH).predict_proba(Xtest)[:, 1], test_proba)
 
-    # -----------------------------------------------------------------------
-    # Summary for the notebook or workflow log
-    # -----------------------------------------------------------------------
+    # ---- summary for the notebook / workflow log ----
     header("Training data")
     print(f"Train rows: {len(Xtrain)} | Test rows: {len(Xtest)} | Features: {Xtrain.shape[1]}")
     print(f"scale_pos_weight: {scale_pos_weight:.4f}")
@@ -233,6 +225,7 @@ def main():
     print("Selected parameters:")
     for k, v in best_params.items():
         print(f"  {k:<17}: {v}")
+    # best validation score at each depth, with its train-fold score next to it
     print("\nBest candidate at each tree depth (mean F1 across folds):")
     by_depth = (pd.DataFrame({"max_depth": results["param_xgbclassifier__max_depth"].astype(int),
                               "validation_f1": results["mean_test_score"],

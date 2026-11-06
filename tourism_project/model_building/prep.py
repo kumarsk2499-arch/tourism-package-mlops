@@ -1,12 +1,7 @@
-"""
-Data preparation for the Wellness Tourism Package pipeline.
-
-Loads the registered dataset from the repository data folder, removes columns
-with no predictive value, fixes a label typo, removes duplicate and repeat
-customer records, and writes a stratified train/test split to disk. The
-workflow uploads the four CSV files as an artifact, so the training job
-receives exactly these splits.
-"""
+# Step 2 of the pipeline: data preparation.
+# Loads the registered csv from the repo data folder, cleans it, and saves a
+# stratified train/test split. In github actions the 4 csv files get uploaded
+# as an artifact so the training job uses exactly these splits.
 from pathlib import Path
 
 import pandas as pd
@@ -17,7 +12,7 @@ DATA_PATH = ROOT / "tourism_project" / "data" / "tourism.csv"
 TARGET = "ProdTaken"
 TEST_SIZE = 0.20
 RANDOM_STATE = 42
-# Columns that describe the customer rather than one particular sales contact
+# same profile columns as data_register.py, used to find repeat customers
 PROFILE_COLUMNS = [
     "Age", "TypeofContact", "CityTier", "Occupation", "Gender", "MaritalStatus",
     "Designation", "MonthlyIncome", "Passport", "OwnCar",
@@ -32,32 +27,29 @@ def main():
     df = pd.read_csv(DATA_PATH)
     n_rows, n_cols = df.shape
 
-    # 1. Remove columns with no predictive value. "Unnamed: 0" is a pandas
-    #    index saved into the CSV and CustomerID is a unique identifier, so
-    #    neither generalizes to new customers. ProductPitched is fully
-    #    determined by Designation in this data, so it adds no information;
-    #    Designation is kept because it is known about a customer before any
-    #    pitch is made. The assertion stops the pipeline if new data ever
-    #    breaks the one-to-one mapping that this decision relies on.
+    # 1. drop columns that can't help predict anything.
+    # "Unnamed: 0" is a saved index and CustomerID is just an id.
+    # ProductPitched is decided by Designation in this data, so it's redundant. Keeping
+    # Designation since it's known before the pitch. The assert is there in case new data
+    # breaks the one-to-one mapping, then this drop needs another look.
     pairs = df[["ProductPitched", "Designation"]].drop_duplicates()
     assert pairs["ProductPitched"].nunique() == len(pairs) == pairs["Designation"].nunique(), \
         "ProductPitched no longer maps one-to-one to Designation; revisit the column drop."
     drop_cols = [c for c in df.columns if c.startswith("Unnamed")] + ["CustomerID", "ProductPitched"]
     df = df.drop(columns=drop_cols)
 
-    # 2. "Fe Male" is a split spelling of "Female"
+    # 2. "Fe Male" is a typo for Female
     n_typo = int((df["Gender"] == "Fe Male").sum())
     df["Gender"] = df["Gender"].replace({"Fe Male": "Female"})
 
-    # 3. Remove exact duplicate rows
+    # 3. exact duplicate rows
     n_dupes = int(df.duplicated().sum())
     df = df.drop_duplicates().reset_index(drop=True)
 
-    # 4. Collapse repeat records of the same customer. These rows agree on every
-    #    profile column, including monthly income to the unit, and always share
-    #    the same outcome. Keeping them would let copies of one customer fall on
-    #    both sides of the split, which rewards memorization and overstates
-    #    test performance. The first record of each customer is kept.
+    # 4. repeat records of the same customer. They match on every profile column
+    # (income to the unit) and always have the same outcome. If kept, copies of one
+    # customer could land in both train and test and the test score would look better
+    # than it really is. Keeping the first record per customer.
     groups = df.groupby(PROFILE_COLUMNS)[TARGET].agg(["size", "nunique"])
     repeat_groups = groups[groups["size"] > 1]
     n_conflicts = int((repeat_groups["nunique"] > 1).sum())
@@ -74,14 +66,14 @@ def main():
     print(f"Cleaned shape    : {df.shape[0]} rows, {df.shape[1]} columns")
     print(f"Gender levels    : {df['Gender'].value_counts().to_dict()}")
 
-    # "Unmarried" is also missing from the data dictionary, but its purchase
-    # rate differs from "Single", so the two levels are kept apart
+    # "Unmarried" isn't in the data dictionary either, checking if it behaves like
+    # "Single" before deciding whether to merge them
     header("Purchase rate by MaritalStatus level")
     rates = df.groupby("MaritalStatus")[TARGET].agg(["mean", "size"]).sort_values("mean", ascending=False)
     rates.columns = ["purchase_rate", "rows"]
     print(rates.round(4).to_string())
 
-    # 5. A stratified split keeps the purchase share equal in train and test
+    # 5. stratified split so train and test have the same share of buyers
     X = df.drop(columns=[TARGET])
     y = df[TARGET]
     Xtrain, Xtest, ytrain, ytest = train_test_split(

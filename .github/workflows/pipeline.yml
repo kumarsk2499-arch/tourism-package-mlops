@@ -3,14 +3,14 @@ name: Tourism Project Pipeline
 on:
   push:
     branches:
-      - main            # every push to main runs the full pipeline
-  workflow_dispatch:    # manual "Run workflow" button in the Actions tab
+      - main            # any push to main runs the whole pipeline
+  workflow_dispatch:    # also lets it be run by hand from the Actions tab
 
 permissions:
-  contents: write       # lets the training job commit the model back to main
+  contents: write       # needed so the training job can push the model to main
 
-# A newer push cancels a run still in progress, so two runs never race to
-# commit a model to main at the same time
+# if a new push comes in while a run is going, cancel the old one
+# (stops two runs from pushing a model at the same time)
 concurrency:
   group: tourism-pipeline-${{ github.ref }}
   cancel-in-progress: true
@@ -21,6 +21,7 @@ env:
 
 jobs:
 
+  # job 1: check the dataset and print the summary
   register-dataset:
     runs-on: ubuntu-latest
     steps:
@@ -42,6 +43,7 @@ jobs:
           name: registered-data
           path: tourism_project/data/tourism.csv
 
+  # job 2: clean + split, then hand the splits to the next job as an artifact
   data-prep:
     needs: register-dataset
     runs-on: ubuntu-latest
@@ -68,6 +70,7 @@ jobs:
             ytrain.csv
             ytest.csv
 
+  # job 3: tune + track with mlflow, then commit the model back to main
   model-training:
     needs: data-prep
     runs-on: ubuntu-latest
@@ -89,7 +92,7 @@ jobs:
       - name: Start MLflow tracking server
         run: |
           nohup mlflow ui --host 0.0.0.0 --port 5000 > mlflow_server.log 2>&1 &
-          # Wait until the server answers its health check before training starts
+          # wait for the health check before training starts
           for i in $(seq 1 30); do
             curl -sf http://localhost:5000/health > /dev/null && echo "MLflow server ready" && exit 0
             sleep 2
@@ -100,7 +103,7 @@ jobs:
           MLFLOW_TRACKING_URI: http://localhost:5000
         run: python tourism_project/model_building/train.py
       - name: Upload MLflow tracking data
-        if: always()
+        if: always()    # keep the mlflow logs even if training fails
         uses: actions/upload-artifact@v7
         with:
           name: mlflow-tracking
@@ -113,7 +116,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add tourism_project/deployment/best_tourism_model.joblib tourism_project/deployment/model_meta.json
-          # [skip ci] stops this commit from starting the pipeline again
+          # [skip ci] so this commit doesn't start the pipeline again
           git commit -m "Update trained model from pipeline run ${{ github.run_number }} [skip ci]" || echo "Model unchanged, nothing to commit"
           git pull --rebase origin main
           git push origin HEAD:main
