@@ -1,0 +1,119 @@
+name: Tourism Project Pipeline
+
+on:
+  push:
+    branches:
+      - main            # every push to main runs the full pipeline
+  workflow_dispatch:    # manual "Run workflow" button in the Actions tab
+
+permissions:
+  contents: write       # lets the training job commit the model back to main
+
+# A newer push cancels a run still in progress, so two runs never race to
+# commit a model to main at the same time
+concurrency:
+  group: tourism-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  REQUIREMENTS: tourism_project/requirements.txt
+
+jobs:
+
+  register-dataset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.REQUIREMENTS }}
+      - name: Install dependencies
+        run: pip install -r ${{ env.REQUIREMENTS }}
+      - name: Register and validate dataset
+        run: python tourism_project/model_building/data_register.py
+      - name: Upload registered dataset
+        uses: actions/upload-artifact@v7
+        with:
+          name: registered-data
+          path: tourism_project/data/tourism.csv
+
+  data-prep:
+    needs: register-dataset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.REQUIREMENTS }}
+      - name: Install dependencies
+        run: pip install -r ${{ env.REQUIREMENTS }}
+      - name: Clean data and create train/test splits
+        run: python tourism_project/model_building/prep.py
+      - name: Upload train and test splits
+        uses: actions/upload-artifact@v7
+        with:
+          name: data-splits
+          path: |
+            Xtrain.csv
+            Xtest.csv
+            ytrain.csv
+            ytest.csv
+
+  model-training:
+    needs: data-prep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.REQUIREMENTS }}
+      - name: Install dependencies
+        run: pip install -r ${{ env.REQUIREMENTS }}
+      - name: Download train and test splits
+        uses: actions/download-artifact@v8
+        with:
+          name: data-splits
+      - name: Start MLflow tracking server
+        run: |
+          nohup mlflow ui --host 0.0.0.0 --port 5000 > mlflow_server.log 2>&1 &
+          # Wait until the server answers its health check before training starts
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5000/health > /dev/null && echo "MLflow server ready" && exit 0
+            sleep 2
+          done
+          echo "MLflow server did not start" && cat mlflow_server.log && exit 1
+      - name: Tune, track, and evaluate model
+        env:
+          MLFLOW_TRACKING_URI: http://localhost:5000
+        run: python tourism_project/model_building/train.py
+      - name: Upload MLflow tracking data
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mlflow-tracking
+          path: |
+            mlruns/
+            mlartifacts/
+          if-no-files-found: ignore
+      - name: Commit trained model to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tourism_project/deployment/best_tourism_model.joblib tourism_project/deployment/model_meta.json
+          # [skip ci] stops this commit from starting the pipeline again
+          git commit -m "Update trained model from pipeline run ${{ github.run_number }} [skip ci]" || echo "Model unchanged, nothing to commit"
+          git pull --rebase origin main
+          git push origin HEAD:main

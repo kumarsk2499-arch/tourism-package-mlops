@@ -1,0 +1,10 @@
+# Local outputs from running the pipeline scripts outside GitHub Actions
+Xtrain.csv
+Xtest.csv
+ytrain.csv
+ytest.csv
+mlruns/
+mlartifacts/
+mlflow_server.log
+__pycache__/
+.ipynb_checkpoints/
